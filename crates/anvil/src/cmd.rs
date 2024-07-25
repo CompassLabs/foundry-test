@@ -821,3 +821,159 @@ mod tests {
         );
     }
 }
+
+// bhack: bindings test!
+use pyo3::prelude::*;
+
+impl NodeArgs {
+    pub async fn pyrun(self) -> eyre::Result<EthApi> {
+        let dump_state = self.dump_state_path();
+        let dump_interval =
+            self.state_interval.map(Duration::from_secs).unwrap_or(DEFAULT_DUMP_INTERVAL);
+
+        let (api, mut handle) = crate::try_spawn(self.into_node_config()).await?;
+
+        // sets the signal handler to gracefully shutdown.
+        let mut fork = api.get_fork();
+        let running = Arc::new(AtomicUsize::new(0));
+
+        // handle for the currently running rt, this must be obtained before setting the crtlc
+        // handler, See [Handle::current]
+        let mut signal = handle.shutdown_signal_mut().take();
+
+        let task_manager = handle.task_manager();
+        let mut on_shutdown = task_manager.on_shutdown();
+
+        let mut state_dumper = PeriodicStateDumper::new(api.clone(), dump_state, dump_interval);
+
+        task_manager.spawn(async move {
+            // wait for the SIGTERM signal on unix systems
+            #[cfg(unix)]
+            let mut sigterm = Box::pin(async {
+                if let Ok(mut stream) =
+                    tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                {
+                    stream.recv().await;
+                } else {
+                    futures::future::pending::<()>().await;
+                }
+            });
+
+            // on windows, this will never fires
+            #[cfg(not(unix))]
+            let mut sigterm = Box::pin(futures::future::pending::<()>());
+
+            // await shutdown signal but also periodically flush state
+            tokio::select! {
+                 _ = &mut sigterm => {
+                    trace!("received sigterm signal, shutting down");
+                },
+                _ = &mut on_shutdown =>{
+
+                }
+                _ = &mut state_dumper =>{}
+            }
+
+            // shutdown received
+            state_dumper.dump().await;
+
+            // cleaning up and shutting down
+            // this will make sure that the fork RPC cache is flushed if caching is configured
+            if let Some(fork) = fork.take() {
+                trace!("flushing cache on shutdown");
+                fork.database
+                    .read()
+                    .await
+                    .maybe_flush_cache()
+                    .expect("Could not flush cache on fork DB");
+                // cleaning up and shutting down
+                // this will make sure that the fork RPC cache is flushed if caching is configured
+            }
+            std::process::exit(0);
+        });
+
+        ctrlc::set_handler(move || {
+            let prev = running.fetch_add(1, Ordering::SeqCst);
+            if prev == 0 {
+                trace!("received shutdown signal, shutting down");
+                let _ = signal.take();
+            }
+        })
+        .expect("Error setting Ctrl-C handler");
+
+        Ok(api)
+    }
+}
+
+
+#[derive(FromPyObject)]
+struct NodeArgsWrapper {
+    pub inner: usize 
+}
+impl NodeArgsWrapper {
+    pub fn of_inner(inner: usize) -> Self {Self{inner}}
+    pub fn to_node_args(self: NodeArgsWrapper) -> NodeArgs {
+        let ptr = self.inner;
+        let args : Box<NodeArgs>;
+        unsafe {
+            args = Box::from_raw(ptr as *mut NodeArgs);
+        }
+        *args
+    }
+}
+struct EthApiWrapper {
+    pub inner: usize
+}
+impl EthApiWrapper {
+    pub fn of_inner(inner: usize) -> Self {Self{inner}}
+    pub fn to_eth_api(self: EthApiWrapper) -> EthApi {
+        let ptr = self.inner;
+        let args : Box<EthApi>;
+        unsafe {
+            args = Box::from_raw(ptr as *mut EthApi);
+        }
+        let api = (*Box::leak(args)).clone();
+        api
+    }
+}
+
+
+use tokio::runtime::Runtime;
+#[pyfunction]
+fn run(ptr :usize) -> PyResult<usize> {
+    let runtime = Runtime::new().unwrap();
+    let ptr = NodeArgsWrapper::of_inner(ptr);
+    let args = ptr.to_node_args(); 
+    let ethapi = runtime.block_on(args.pyrun()).unwrap();
+    let ethapi = Box::new(ethapi);
+    let ethapi = Box::into_raw(ethapi);
+    Ok(ethapi as usize)
+}
+
+#[pyfunction]
+fn mine_block(ptr: usize) {
+    let runtime = Runtime::new().unwrap();
+    let ptr = EthApiWrapper::of_inner(ptr);
+    let ethapi = ptr.to_eth_api();
+    runtime.block_on(ethapi.mine_one())
+}
+
+#[pyfunction]
+fn create(args : Vec<String>) -> PyResult<usize> {
+    let args: NodeArgs = NodeArgs::parse_from(args);
+    let args = Box::new(args);
+    let args = Box::into_raw(args);
+    Ok(args as usize)
+}
+/// A Python module implemented in Rust. The name of this function must match
+/// the `lib.name` setting in the `Cargo.toml`, else Python will not be able to
+/// import the module.
+#[pymodule]
+#[pyo3(name="anvil")]
+fn anvil(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_function(wrap_pyfunction!(run, m)?)?;
+    m.add_function(wrap_pyfunction!(create, m)?)?;
+    m.add_function(wrap_pyfunction!(mine_block, m)?)?;
+
+    Ok(())
+}
