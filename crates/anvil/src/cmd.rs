@@ -7,7 +7,7 @@ use alloy_genesis::Genesis;
 use alloy_primitives::{utils::Unit, B256, U256};
 use alloy_signer_local::coins_bip39::{English, Mnemonic};
 use anvil_server::ServerConfig;
-use clap::Parser;
+use clap::{builder::TypedValueParser, Parser};
 use core::fmt;
 use foundry_config::{Chain, Config, FigmentProviders};
 use futures::FutureExt;

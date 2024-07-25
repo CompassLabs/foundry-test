@@ -22,6 +22,7 @@ use crate::{
 };
 use alloy_primitives::{Address, U256};
 use alloy_signer_local::PrivateKeySigner;
+use cmd::NodeArgs;
 use eth::backend::fork::ClientFork;
 use foundry_common::provider::{ProviderBuilder, RetryProvider};
 use foundry_evm::revm;
@@ -446,4 +447,74 @@ pub fn init_tracing() -> LoggingManager {
     };
 
     manager
+}
+
+use pyo3::prelude::*;
+use rand::Rng;
+use std::cmp::Ordering;
+use clap::Parser;
+
+#[pyfunction]
+fn guess_the_number() {
+    println!("Guess the number!");
+
+    let secret_number = rand::thread_rng().gen_range(1..101);
+
+    loop {
+        println!("Please input your guess.");
+
+        let mut guess = String::new();
+
+        io::stdin()
+            .read_line(&mut guess)
+            .expect("Failed to read line");
+
+        let guess: u32 = match guess.trim().parse() {
+            Ok(num) => num,
+            Err(_) => continue,
+        };
+
+        println!("You guessed: {}", guess);
+
+        match guess.cmp(&secret_number) {
+            Ordering::Less => println!("Too small!"),
+            Ordering::Greater => println!("Too big!"),
+            Ordering::Equal => {
+                println!("You win!");
+                break;
+            }
+        }
+    }
+}
+
+use tokio::runtime::Runtime;
+#[pyfunction]
+fn run(ptr :usize) {
+    let runtime = Runtime::new().unwrap();
+    let args : Box<NodeArgs>;
+    unsafe {
+        args = Box::from_raw(ptr as *mut NodeArgs);
+    }
+    runtime.block_on(args.run()).unwrap();
+}
+
+#[pyfunction]
+fn create() -> Result<usize, PyErr> {
+    let args: cmd::NodeArgs = cmd::NodeArgs::parse_from(["anvil", "--no-mining", "--host", "127.0.0.1", "--accounts", "1", "--balance", "10000000000000000000", "--chain-id", "31337", "--port", "5123", "--base-fee", "0", "--disable-block-gas-limit", "--ipc", "/tmp/anvil_5123.ipc", "--prune-history", "--order", "fifo", "--transaction-block-keeper", "64"]);
+    let args = Box::new(args);
+    let args = Box::into_raw(args);
+    return Ok(args as usize);
+}
+
+/// A Python module implemented in Rust. The name of this function must match
+/// the `lib.name` setting in the `Cargo.toml`, else Python will not be able to
+/// import the module.
+#[pymodule]
+#[pyo3(name="anvil")]
+fn anvil(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_function(wrap_pyfunction!(guess_the_number, m)?)?;
+    m.add_function(wrap_pyfunction!(run, m)?)?;
+    m.add_function(wrap_pyfunction!(create, m)?)?;
+
+    Ok(())
 }

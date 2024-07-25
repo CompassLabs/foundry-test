@@ -1,0 +1,53 @@
+[tool.maturin]
+module-name = "foundry.envs"
+features = ["pyo3/extension-module"]
+
+[build-system]
+requires = ["maturin>=1.2,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "foundry"
+version = "0.4.1"
+description = "Ethereum full node Library"
+license = {file = "LICENSE"}
+readme = "README.md"
+requires-python = ">=3.9"
+keywords = ["ethereum", "defi"]
+authors = [
+]
+maintainers = [
+]
+classifiers = [
+  "Programming Language :: Python",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Rust",
+  "Programming Language :: Python :: Implementation :: CPython",
+  "Programming Language :: Python :: Implementation :: PyPy",
+]
+dependencies = [
+  "eth-utils >= 2.3.1",
+  "eth-abi >= 4.2.1",
+  "tqdm >= 4.66.1",
+  "numpy >= 1.26.2",
+  "eth-hash[pycryptodome] >= 0.5.2",
+  "joblib >= 1.3.2",
+  "py-solc-x >= 2.0.2",
+  "pandas >= 2.2.0",
+]
+
+[tool.hatch.envs.dev]
+dependencies = [
+  "maturin >= 1.2.3",
+  "pytest >= 7.4.2",
+  "pre-commit >= 3.3.3",
+]
+
+[tool.hatch.envs.dev.scripts]
+develop = "maturin develop --release"
+lint = "pre-commit install && pre-commit run --all-files"
+test = "maturin develop --release && pytest -v tests"
+build = "cd crates/anvil && maturin build --release"
+
