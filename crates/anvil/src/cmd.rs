@@ -7,6 +7,7 @@ use alloy_genesis::Genesis;
 use alloy_primitives::{utils::Unit, B256, U256};
 use alloy_signer_local::coins_bip39::{English, Mnemonic};
 use anvil_server::ServerConfig;
+use axum::handler;
 use clap::{builder::TypedValueParser, Parser};
 use core::fmt;
 use foundry_config::{Chain, Config, FigmentProviders};
@@ -824,6 +825,7 @@ mod tests {
 
 // bhack: bindings test!
 use pyo3::prelude::*;
+use std::thread;
 
 impl NodeArgs {
     pub async fn pyrun(self) -> eyre::Result<EthApi> {
@@ -900,6 +902,11 @@ impl NodeArgs {
             }
         })
         .expect("Error setting Ctrl-C handler");
+
+        thread::spawn(|| {
+            let runtime = tokio::runtime::Runtime::new().unwrap();
+            tokio::runtime::Runtime::block_on(&runtime, handle).unwrap()
+        });
 
         Ok(api)
     }
