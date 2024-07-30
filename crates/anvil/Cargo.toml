@@ -94,6 +94,8 @@ tempfile.workspace = true
 itertools.workspace = true
 rand = "0.8"
 eyre.workspace = true
+once_cell.workspace = true
+hex = "0.4"
 
 # cli
 clap = { version = "4", features = [
@@ -133,7 +135,14 @@ jemalloc = ["dep:tikv-jemallocator"]
 [dependencies.pyo3]
 version = "0.21.1"
 # "abi3-py38" tells pyo3 (and maturin) to build using the stable ABI with minimum Python version 3.8
-features = ["abi3-py38", "extension-module"]
+features = ["abi3-py38"]
 
 [lib]
 crate-type = ["cdylib"]
+
+[profile.release]
+opt-level = 3
+strip = false
+debug = true
+codegen-units = 1
+lto = true

@@ -22,7 +22,6 @@ use crate::{
 };
 use alloy_primitives::{Address, U256};
 use alloy_signer_local::PrivateKeySigner;
-use cmd::NodeArgs;
 use eth::backend::fork::ClientFork;
 use foundry_common::provider::{ProviderBuilder, RetryProvider};
 use foundry_evm::revm;

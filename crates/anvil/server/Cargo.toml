@@ -44,3 +44,10 @@ pin-project = "1"
 [features]
 default = ["ipc"]
 ipc = ["dep:interprocess", "dep:bytes", "dep:tokio-util"]
+
+[profile.release]
+opt-level = 3
+strip = false
+debug = true
+codegen-units = 1
+lto = true

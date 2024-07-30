@@ -3,12 +3,16 @@ use crate::{
     eth::{backend::db::SerializableState, pool::transactions::TransactionOrder, EthApi},
     AccountGenerator, Hardfork, NodeConfig, CHAIN_ID,
 };
+use alloy_consensus::Receipt;
 use alloy_genesis::Genesis;
-use alloy_primitives::{utils::Unit, B256, U256};
+use alloy_primitives::{hex::ToHexExt, utils::Unit, Bytes, B256, U256};
+use alloy_rpc_types::{Log, TransactionRequest};
+use alloy_serde::WithOtherFields;
 use alloy_signer_local::coins_bip39::{English, Mnemonic};
+use anvil_core::eth::transaction::ReceiptResponse;
 use anvil_server::ServerConfig;
-use axum::handler;
 use clap::{builder::TypedValueParser, Parser};
+use hex::FromHex;
 use core::fmt;
 use foundry_config::{Chain, Config, FigmentProviders};
 use futures::FutureExt;
@@ -825,7 +829,8 @@ mod tests {
 
 // bhack: bindings test!
 use pyo3::prelude::*;
-use std::thread;
+use once_cell::sync::Lazy;
+static RUNTIME : Lazy<Runtime> = Lazy::new(|| Runtime::new().unwrap());
 
 impl NodeArgs {
     pub async fn pyrun(self) -> eyre::Result<EthApi> {
@@ -894,26 +899,22 @@ impl NodeArgs {
             std::process::exit(0);
         });
 
-        ctrlc::set_handler(move || {
+        let _ = ctrlc::set_handler(move || {
             let prev = running.fetch_add(1, Ordering::SeqCst);
             if prev == 0 {
                 trace!("received shutdown signal, shutting down");
                 let _ = signal.take();
             }
-        })
-        .expect("Error setting Ctrl-C handler");
-
-        thread::spawn(|| {
-            let runtime = tokio::runtime::Runtime::new().unwrap();
-            tokio::runtime::Runtime::block_on(&runtime, handle).unwrap()
         });
+
+        RUNTIME.spawn(handle);
 
         Ok(api)
     }
 }
 
 
-#[derive(FromPyObject)]
+#[pyclass]
 struct NodeArgsWrapper {
     pub inner: usize 
 }
@@ -944,14 +945,12 @@ impl EthApiWrapper {
     }
 }
 
-
 use tokio::runtime::Runtime;
 #[pyfunction]
 fn run(ptr :usize) -> PyResult<usize> {
-    let runtime = Runtime::new().unwrap();
     let ptr = NodeArgsWrapper::of_inner(ptr);
     let args = ptr.to_node_args(); 
-    let ethapi = runtime.block_on(args.pyrun()).unwrap();
+    let ethapi = RUNTIME.block_on(args.pyrun()).unwrap();
     let ethapi = Box::new(ethapi);
     let ethapi = Box::into_raw(ethapi);
     Ok(ethapi as usize)
@@ -959,10 +958,246 @@ fn run(ptr :usize) -> PyResult<usize> {
 
 #[pyfunction]
 fn mine_block(ptr: usize) {
-    let runtime = Runtime::new().unwrap();
     let ptr = EthApiWrapper::of_inner(ptr);
     let ethapi = ptr.to_eth_api();
-    runtime.block_on(ethapi.mine_one())
+    RUNTIME.block_on(ethapi.mine_one())
+}
+
+#[pyclass(get_all, set_all, rename_all="camelCase")]
+#[derive(Clone)]
+pub struct PyLog {
+    address: String,
+    block_hash: Option<String>,
+    block_number: Option<u64>,
+    data: String,
+    log_index: Option<u64>,
+    topics:Vec<String>,
+    transaction_hash:Option<String>,
+    transaction_index:Option<u64>,
+    removed: bool,
+}
+enum PyLogAttribute {
+    Address(String),
+    BlockHash(Option<String>),
+    BlockNumber(Option<u64>),
+    Data(String),
+    LogIndex(Option<u64>),
+    Topics(Vec<String>),
+    TransactionHash(Option<String>),
+    TransactionIndex(Option<u64>),
+}
+impl IntoPy<PyObject> for PyLogAttribute {
+    fn into_py(self, py: Python<'_>) -> PyObject {
+        match self {
+            PyLogAttribute::Address(v) => v.into_py(py),
+            PyLogAttribute::BlockHash(v) => v.into_py(py),
+            PyLogAttribute::BlockNumber(v) => v.into_py(py),
+            PyLogAttribute::Data(v) => v.into_py(py),
+            PyLogAttribute::LogIndex(v) => v.into_py(py),
+            PyLogAttribute::Topics(v) => v.into_py(py),
+            PyLogAttribute::TransactionHash(v) => v.into_py(py),
+            PyLogAttribute::TransactionIndex(v) => v.into_py(py),
+        } 
+    }
+}
+#[pymethods]
+impl PyLog {
+    fn __getitem__(&self, idx: &str) -> impl IntoPy<PyObject> {
+        match idx {
+            "address" => PyLogAttribute::Address(self.address.clone()),
+            "blockHash" => PyLogAttribute::BlockHash(self.block_hash.clone()),
+            "blockNumber" => PyLogAttribute::BlockNumber(self.block_number.clone()),
+            "data" => PyLogAttribute::Data(self.data.clone()),
+            "logIndex" => PyLogAttribute::LogIndex(self.log_index.clone()),
+            "topics" => PyLogAttribute::Topics(self.topics.clone()),
+            "transactionHash" => PyLogAttribute::TransactionHash(self.transaction_hash.clone()),
+            "transactionIndex" => PyLogAttribute::TransactionIndex(self.transaction_index.clone()),
+            _ => panic!("can't index that!")
+        }
+    }
+}
+
+#[pyclass(get_all, set_all, rename_all="camelCase")]
+pub struct PyReceiptResponse {
+    pub transaction_hash: String,
+    pub transaction_index: Option<u64>,
+    pub block_hash: Option<String>,
+    pub block_number: Option<u64>,
+    pub gas_used: u128,
+    pub effective_gas_price: u128,
+    pub blob_gas_used: Option<u128>,
+    pub blob_gas_price: Option<u128>,
+    pub from: String,
+    pub to: Option<String>,
+    pub contract_address: Option<String>,
+    pub status: bool,
+    pub cumulative_gas_used: u128,
+    pub logs : Vec<PyLog>
+}
+
+#[pymethods]
+impl PyReceiptResponse {
+    fn __getitem__(&self, idx: &str) -> Vec<PyLog> {
+        match idx {
+            "logs" => self.logs.clone(), 
+            _ => panic!("can't index that!")
+        }
+    }
+}
+
+use std::fmt::Write;
+pub fn encode_hex(bytes: &[u8]) -> String {
+    let mut s = String::with_capacity(bytes.len() * 2);
+    for &b in bytes {
+        write!(&mut s, "{:02x}", b).unwrap();
+    }
+    s
+}
+pub fn encode_hex32(bytes: &[u32]) -> String {
+    let mut s = String::with_capacity(bytes.len() * 2);
+    for &b in bytes {
+        write!(&mut s, "{:02x}", b).unwrap();
+    }
+    s
+}
+pub fn encode_hex64(bytes: &[u64]) -> String {
+    let mut s = String::with_capacity(bytes.len() * 2);
+    for &b in bytes {
+        write!(&mut s, "{:02x}", b).unwrap();
+    }
+    s
+}
+
+use alloy_consensus::Eip658Value::Eip658;
+#[pyfunction]
+fn get_transaction_receipt(ptr: usize, hash: [u8; 32]) -> PyReceiptResponse {
+    let hash = B256::new(hash);
+    let ptr = EthApiWrapper::of_inner(ptr);
+    let ethapi = ptr.to_eth_api();
+    let receipt : ReceiptResponse = RUNTIME.block_on(ethapi.transaction_receipt(hash)).unwrap().unwrap();
+    let ReceiptResponse{
+        transaction_hash,
+        transaction_index,
+        block_hash,
+        block_number,
+        gas_used,
+        contract_address,
+        effective_gas_price,
+        from,
+        to,
+        blob_gas_price,
+        blob_gas_used,
+        state_root:_,
+        authorization_list:_,
+        inner,
+    } = receipt;
+    let Receipt {
+        status,
+        cumulative_gas_used,
+        logs,
+    } = inner.as_receipt_with_bloom().receipt.clone();
+    let status = match status {Eip658(status) => status, _ => true};
+    let logs = 
+        logs.into_iter().map(
+            |log : Log|  {
+            let Log { inner:alloy_primitives::Log{ address, data }, block_hash, block_number, block_timestamp:_, transaction_hash, transaction_index, log_index, removed:_ } = log;
+            let topics = data.topics();
+            PyLog {
+                address:encode_hex(address.as_slice()),
+                block_hash:block_hash.map(|block_hash| encode_hex(block_hash.as_slice())),
+                block_number:block_number,
+                log_index: log_index,
+                topics: topics.iter().map(|topic| encode_hex(topic.as_slice())).collect(), 
+                transaction_hash: transaction_hash.map(|transaction_hash| encode_hex(transaction_hash.as_slice())),
+                transaction_index: transaction_index,
+                removed: false,
+                data: hex::encode(data.data)
+            }
+        }
+        ).collect();
+    PyReceiptResponse {
+        transaction_hash:encode_hex(transaction_hash.as_slice()),
+        transaction_index,
+        block_hash:block_hash.map(|block_hash| encode_hex(block_hash.as_slice())),
+        block_number,
+        gas_used,
+        contract_address:contract_address.map(|contract_address| encode_hex(contract_address.as_slice())),
+        effective_gas_price,
+        from:encode_hex(from.as_slice()),
+        to:to.map(|to| encode_hex(to.as_slice())),
+        blob_gas_price,
+        blob_gas_used,
+        status,
+        cumulative_gas_used,
+        logs,
+    }
+}
+#[derive(Clone)]
+#[pyclass(get_all, set_all)]
+pub enum PyTxKind {
+    Create{},
+    Call{v:String},
+}
+impl Into<alloy_primitives::TxKind> for PyTxKind {
+    fn into(self) -> alloy_primitives::TxKind {
+        match self {
+            PyTxKind::Create{} => alloy_primitives::TxKind::Create,
+            PyTxKind::Call{v} => alloy_primitives::TxKind::Call(alloy_primitives::Address::from_slice(&hex::decode(v).unwrap()))
+        }
+    }
+}
+#[derive(Clone)]
+#[pyclass(dict, get_all, set_all, rename_all="camelCase")]
+pub struct PyTransactionRequest {
+    pub from: Option<String>,
+    pub to: Option<PyTxKind>,
+    pub gas_price: Option<u128>,
+    pub max_fee_per_gas: Option<u128>,
+    pub max_priority_fee_per_gas: Option<u128>,
+    pub max_fee_per_blob_gas: Option<u128>,
+    pub gas: Option<u128>,
+    // pub value: Option<U256>,
+    pub input: Option<String>,
+    // pub nonce: Option<u64>,
+    // pub chain_id: Option<ChainId>,
+    // pub access_list: Option<AccessList>,
+    pub transaction_type: Option<u8>,
+    // pub blob_versioned_hashes: Option<Vec<B256>>,
+    // pub sidecar: Option<BlobTransactionSidecar>,
+}
+impl Into<TransactionRequest> for &mut PyTransactionRequest {
+    fn into(self) -> TransactionRequest {
+        let v : PyTransactionRequest = self.clone();
+        let PyTransactionRequest { from, to, gas_price, max_fee_per_gas, max_priority_fee_per_gas, max_fee_per_blob_gas, gas, input, transaction_type } = v;
+        let from : Option<alloy_primitives::Address> = from.map(|from| hex::decode(from).ok()).flatten().map(|from| {
+            let from: Vec<u8> = from;
+            alloy_primitives::Address::from_slice(&from)
+        });
+        let to: Option<alloy_primitives::TxKind> = to.map(|to| to.into());
+        let input: Option<Bytes> = 
+            input.map(|input| {
+                let input = hex::decode(input).unwrap();
+                Bytes::copy_from_slice(&input)
+            });
+        let input: alloy_rpc_types::TransactionInput = 
+            alloy_rpc_types::TransactionInput { input, data: None };
+        TransactionRequest {from, to, gas_price, max_fee_per_gas, max_priority_fee_per_gas, max_fee_per_blob_gas, gas, value: None, input, transaction_type, blob_versioned_hashes: None, nonce: None, chain_id: None, access_list: None, sidecar: None }
+    }    
+}
+#[pymethods]
+impl PyTransactionRequest {
+    #[staticmethod]
+    fn create(from: Option<String>, to:Option<PyTxKind>, gas_price:Option<u128>, max_fee_per_gas:Option<u128>, max_priority_fee_per_gas:Option<u128>, max_fee_per_blob_gas:Option<u128>, gas:Option<u128>, input:Option<String>, transaction_type:Option<u8>) -> Self {
+        Self { from, to, gas_price, max_fee_per_gas, max_priority_fee_per_gas, max_fee_per_blob_gas, gas, input, transaction_type }
+    }
+}
+
+#[pyfunction]
+fn call(ptr : usize, request : &mut PyTransactionRequest) -> Option<String> {
+    let ptr = EthApiWrapper::of_inner(ptr);
+    let ethapi = ptr.to_eth_api();
+    let v = RUNTIME.block_on(ethapi.call(WithOtherFields::new(request.into()), None, None)).ok();
+    v.map(|v| alloy_primitives::Bytes::encode_hex(&v))
 }
 
 #[pyfunction]
@@ -981,6 +1216,10 @@ fn anvil(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(run, m)?)?;
     m.add_function(wrap_pyfunction!(create, m)?)?;
     m.add_function(wrap_pyfunction!(mine_block, m)?)?;
+    m.add_function(wrap_pyfunction!(get_transaction_receipt, m)?)?;
+    m.add_function(wrap_pyfunction!(call, m)?)?;
+    m.add_class::<PyTxKind>()?;
+    m.add_class::<PyTransactionRequest>()?;
 
     Ok(())
 }
