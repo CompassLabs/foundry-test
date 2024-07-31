@@ -23,12 +23,14 @@ pub fn build_root(values: impl IntoIterator<Item = (Nibbles, Vec<u8>)>) -> B256 
 
 /// Builds state root from the given accounts
 pub fn state_root(accounts: &HashMap<Address, DbAccount>) -> B256 {
-    build_root(trie_accounts(accounts))
+    // build_root(trie_accounts(accounts))
+    Default::default()
 }
 
 /// Builds storage root from the given storage
 pub fn storage_root(storage: &HashMap<U256, U256>) -> B256 {
-    build_root(trie_storage(storage))
+    // build_root(trie_storage(storage))
+    Default::default()
 }
 
 /// Builds iterator over stored key-value pairs ready for storage trie root calculation.

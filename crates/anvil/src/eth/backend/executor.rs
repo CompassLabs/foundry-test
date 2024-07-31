@@ -208,7 +208,8 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'
 
         let ommers: Vec<Header> = Vec::new();
         let receipts_root =
-            trie::ordered_trie_root(receipts.iter().map(Encodable2718::encoded_2718));
+            Default::default();
+            // trie::ordered_trie_root(receipts.iter().map(Encodable2718::encoded_2718));
 
         let partial_header = PartialHeader {
             parent_hash,

@@ -960,7 +960,8 @@ fn run(ptr :usize) -> PyResult<usize> {
 fn mine_block(ptr: usize) {
     let ptr = EthApiWrapper::of_inner(ptr);
     let ethapi = ptr.to_eth_api();
-    RUNTIME.block_on(ethapi.mine_one())
+    let res: String = RUNTIME.block_on(ethapi.evm_mine(None)).unwrap();
+    ()
 }
 
 #[pyclass(get_all, set_all, rename_all="camelCase")]
@@ -1068,6 +1069,16 @@ pub fn encode_hex64(bytes: &[u64]) -> String {
     s
 }
 
+fn hex_lib_decode(s : String) -> Vec<u8> {
+    let s = 
+    if s.starts_with("0x") {
+        String::from(&s[2..])
+    } else {
+        s
+    };
+    hex::decode(s).unwrap()
+}
+
 use alloy_consensus::Eip658Value::Eip658;
 #[pyfunction]
 fn get_transaction_receipt(ptr: usize, hash: [u8; 32]) -> PyReceiptResponse {
@@ -1142,7 +1153,7 @@ impl Into<alloy_primitives::TxKind> for PyTxKind {
     fn into(self) -> alloy_primitives::TxKind {
         match self {
             PyTxKind::Create{} => alloy_primitives::TxKind::Create,
-            PyTxKind::Call{v} => alloy_primitives::TxKind::Call(alloy_primitives::Address::from_slice(&hex::decode(v).unwrap()))
+            PyTxKind::Call{v} => alloy_primitives::TxKind::Call(alloy_primitives::Address::from_slice(&hex_lib_decode(v)))
         }
     }
 }
@@ -1169,14 +1180,14 @@ impl Into<TransactionRequest> for &mut PyTransactionRequest {
     fn into(self) -> TransactionRequest {
         let v : PyTransactionRequest = self.clone();
         let PyTransactionRequest { from, to, gas_price, max_fee_per_gas, max_priority_fee_per_gas, max_fee_per_blob_gas, gas, input, transaction_type } = v;
-        let from : Option<alloy_primitives::Address> = from.map(|from| hex::decode(from).ok()).flatten().map(|from| {
+        let from : Option<alloy_primitives::Address> = from.map(|from| hex_lib_decode(from)).map(|from| {
             let from: Vec<u8> = from;
             alloy_primitives::Address::from_slice(&from)
         });
         let to: Option<alloy_primitives::TxKind> = to.map(|to| to.into());
         let input: Option<Bytes> = 
             input.map(|input| {
-                let input = hex::decode(input).unwrap();
+                let input = hex_lib_decode(input);
                 Bytes::copy_from_slice(&input)
             });
         let input: alloy_rpc_types::TransactionInput = 
@@ -1193,11 +1204,11 @@ impl PyTransactionRequest {
 }
 
 #[pyfunction]
-fn call(ptr : usize, request : &mut PyTransactionRequest) -> Option<String> {
+fn call(ptr : usize, request : &mut PyTransactionRequest) -> String {
     let ptr = EthApiWrapper::of_inner(ptr);
     let ethapi = ptr.to_eth_api();
-    let v = RUNTIME.block_on(ethapi.call(WithOtherFields::new(request.into()), None, None)).ok();
-    v.map(|v| alloy_primitives::Bytes::encode_hex(&v))
+    let v = RUNTIME.block_on(ethapi.call(WithOtherFields::new(request.into()), None, None)).unwrap();
+    alloy_primitives::Bytes::encode_hex(&v)
 }
 
 #[pyfunction]
