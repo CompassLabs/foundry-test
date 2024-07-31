@@ -208,12 +208,13 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'
 
         let ommers: Vec<Header> = Vec::new();
         let receipts_root =
-            trie::ordered_trie_root(receipts.iter().map(Encodable2718::encoded_2718));
+            // trie::ordered_trie_root(receipts.iter().map(Encodable2718::encoded_2718));
+            Default::default();
 
         let partial_header = PartialHeader {
             parent_hash,
             beneficiary,
-            state_root: self.db.maybe_state_root().unwrap_or_default(),
+            state_root: Default::default(), // self.db.maybe_state_root().unwrap_or_default(),
             receipts_root,
             logs_bloom: bloom,
             difficulty,

@@ -28,7 +28,8 @@ pub fn state_root(accounts: &HashMap<Address, DbAccount>) -> B256 {
 
 /// Builds storage root from the given storage
 pub fn storage_root(storage: &HashMap<U256, U256>) -> B256 {
-    build_root(trie_storage(storage))
+    Default::default()
+    // build_root(trie_storage(storage))
 }
 
 /// Builds iterator over stored key-value pairs ready for storage trie root calculation.
