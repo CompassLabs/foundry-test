@@ -1,5 +1,26 @@
 <img src=".github/logo.png" alt="Foundry logo" align="right" width="120" />
 
+## Compass Labs Additions
+
+This is a Compass Labs fork of Foundry.
+
+It removes some steps when mining a block to calculate hashes. 
+Skipping these hashes means that the concensus mechanism will no longer work!
+
+This is fine if you are running a simulation and not a real node. 
+
+This should also yield significant speed ups to simulations (with Compass Lab's Dojo, the speed up can be between 25%-60%). This is because
+while mining a block no other work can be done, so it is a highly sequential operation. 
+
+To install:
+``` bash
+git clone git@github.com:CompassLabs/foundry-test.git
+cd foundry-test
+git checkout do-not-hash
+# You must have cargo installed! See https://doc.rust-lang.org/cargo/getting-started/installation.html
+cargo install --path ./crates/anvil --profile release --force --locked
+```
+
 ## Foundry
 
 ![Github Actions][gha-badge] [![Telegram Chat][tg-badge]][tg-url] [![Telegram Support][tg-support-badge]][tg-support-url]
