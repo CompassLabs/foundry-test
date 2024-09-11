@@ -7,7 +7,7 @@ This is a Compass Labs fork of Foundry.
 It removes some steps when mining a block to calculate hashes. 
 Skipping these hashes means that the concensus mechanism will no longer work!
 
-This is fine if you are running a simulation and not a real node. 
+This is fine if you are running a simulation and not attempting to do any mining.
 
 This should also yield significant speed ups to simulations (with Compass Lab's Dojo, the speed up can be between 25%-60%). This is because
 while mining a block no other work can be done, so it is a highly sequential operation. 
